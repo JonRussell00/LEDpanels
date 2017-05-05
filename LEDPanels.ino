@@ -1,4 +1,3 @@
-/******************************************************************************
 This is an Arduino sketch to drive 4 LED panels based on MBI5034 LED drivers.
 
 Written by Oliver Dewdney and Jon Russell
