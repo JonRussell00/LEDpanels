@@ -1,3 +1,4 @@
+/******************************************************************************
 This is an Arduino sketch to drive 4 LED panels based on MBI5034 LED drivers.
 
 Written by Oliver Dewdney and Jon Russell
@@ -55,10 +56,27 @@ PC  D13   D5    X     X     X     X     X     X
 PD  D6    D12   TX    D4    D1    D0    D2    D3
 PE  X     D7    X     X     X     HWB   X     X
 PF  A0    A1    A2    A3    X     X     A4    A5
+
+This sketch now inherits from the Adafruit GFX library classes. This means we
+can use the graphics functions like drawCircle, drawRect, drawTriangle, plus
+the various text functions and fonts.
 ******************************************************************************/
 
 #include "digitalWriteFast.h"
-#include "font.h"
+#include <Adafruit_GFX.h>
+#include <gfxfont.h>
+
+class LedPanel : public Adafruit_GFX
+{
+  public:
+    LedPanel() : Adafruit_GFX(64,64) {};
+    void drawPixel(int16_t x, int16_t y, uint16_t color);
+    uint16_t newColor(uint8_t red, uint8_t green, uint8_t blue);
+    uint16_t getColor() { return textcolor; }
+    void drawBitmapMem(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int16_t h, uint16_t color);
+};
+
+LedPanel panel;
 
 #define PIN_D1    3   //PD0 - D1 on Panel 1
 #define PIN_D2    2   //PD1 - D2 on Panel 1
@@ -86,12 +104,32 @@ void FillBuffer(byte b){
   }
 }
 
+void LedPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
+  setpixel(x,y,color);
+}
+
+uint16_t LedPanel::newColor(uint8_t red, uint8_t green, uint8_t blue) {
+  return (blue>>7) | ((green&0x80)>>6) | ((red&0x80)>>5);
+}
+
+void LedPanel::drawBitmapMem(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int16_t h, uint16_t color) {
+  int16_t i, j, byteWidth = (w + 7) / 8;
+
+  for(j=0; j<h; j++) {
+    for(i=0; i<w; i++ ) {
+      if(bitmap[j * byteWidth + i / 8] & (128 >> (i & 7))) {
+        panel.drawPixel(x+i, y+j, color);
+      }
+    }
+  }
+}
+
 // bb describes which data lines drive which of the 4 panels.
 // By adjusting the order of the bits in the array, you can change the panel order visually.
 byte bb[8] = { 0x40, 0x80, 0x10, 0x20, 0x04, 0x08, 0x01, 0x02 };
 
 // Set a pixel to a specific 3 bit colour (8 colours)
-// 0b00000000 = black (off), 0b00000001 = Red, 0b00000010 = Green, 0b00000100 = Blue, 0b00000111 = White, etc.
+// 0b000 = black (off), 0b001 = Blue, 0b010 = Green, 0b100 = Red, 0b011 = Cyan, 0b101 = Magenta, 0b110 = Yellow, 0b111 = White, etc.
 void setpixel(byte x, byte y, byte col) {
   int16_t off = (x&7) + (x & 0xf8)*6 + ((y & 4)*2);
 //  int16_t off = (x&7) + (x >> 3)*48 + ((y & 4)*2);
@@ -109,32 +147,9 @@ void setpixel(byte x, byte y, byte col) {
   }
 }
 
-void drawText(byte x, byte y, byte col, const char* msg) {
-  while(*msg) {
-    const char c = *msg;
-    if (c==32) col++;
-    const unsigned char* f  = &font[((uint8_t)c)*5];
-    for( byte fx = 0; fx < 5; fx++) {
-      unsigned char fc = pgm_read_byte_near(f++);
-      for(byte fy = 0; fy < 7; fy++) {
-        if (fc & (1<<fy)){
-          setpixel(x+fx, y+fy, col);
-        }
-      }
-    }
-    x += 6;
-    if (x>=(63-5)){
-      x = 0;
-      y += 8;
-    }
-    msg++;
-  }
-}
-
 uint8_t bank = 0;
 
 void UpdateFrame() {
-
   byte * f = frame[bank];
   for (uint16_t n = 0; n<384; n++) {
     PORTD = *f;      // We use the low nibble on PortD for Panel 1 & 2
@@ -164,7 +179,7 @@ void UpdateFrame() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Begin...");
+  //Serial.println("Begin...");
   
   pinMode(PIN_D1, OUTPUT);
   pinMode(PIN_D2, OUTPUT);
@@ -194,7 +209,8 @@ void setup() {
   digitalWrite(PIN_LAT, LOW);
   digitalWrite(PIN_CLK, LOW);
 
-  FillBuffer(0xFF);         // Set all LEDs on. (White)
+//  FillBuffer(0xFF);         // Set all LEDs on. (White)
+  FillBuffer(0x00);         // Set all LEDs off. (Black)
 
   // initialize Timer1 ~400Hz
   noInterrupts();           // disable all interrupts
@@ -212,49 +228,199 @@ ISR(TIMER1_COMPA_vect){     // timer compare interrupt service routine
   UpdateFrame();
 }
 
-// Fill the frame with a specific colour (3 bit colour) with a delay to show a "wipe" effect.
-void FillColour(byte c){
-  for (int y=0; y<64; y++){     // assumes 4 panels. Y is 4 x 16 LEDs high
-    for (int x=0; x<64; x++){   // Each panel has 64 LEDs on X
-      setpixel(x, y, c);
-      delay(2);
+#define LED_BLACK 0
+#define LED_BLUE 1
+#define LED_GREEN 2
+#define LED_CYAN 3
+#define LED_RED 4
+#define LED_MAGENTA 5
+#define LED_YELLOW 6
+#define LED_WHITE 7
+
+void testText1to8() {
+  FillBuffer(0x00);
+  panel.setTextSize(1);
+  panel.setCursor(0, 0);
+
+  panel.setTextColor(LED_WHITE);  
+  panel.println("1234567890");
+  panel.setTextColor(LED_BLUE);  
+  panel.println("ABCDEFGHIJ");
+  panel.setTextColor(LED_GREEN);  
+  panel.println("The Quick ");
+  panel.setTextColor(LED_CYAN);  
+  panel.println("Brown Fox ");
+  panel.setTextColor(LED_RED);  
+  panel.println("Jumped    ");
+  panel.setTextColor(LED_MAGENTA);  
+  panel.println("Over the  ");
+  panel.setTextColor(LED_YELLOW);  
+  panel.println("Lazy Dog !");
+  panel.setTextColor(LED_WHITE);  
+  panel.println("# * @ ! ; ");
+}
+
+/*
+void testText() {
+  panel.fillScreen(LED_BLACK);
+  panel.setCursor(0, 0);
+  panel.setTextColor(LED_WHITE);  
+  panel.setTextSize(1);
+  panel.println("Hello!");
+  panel.setTextColor(LED_YELLOW); 
+  panel.setTextSize(1);
+  panel.println(1234.56);
+  panel.setTextColor(LED_RED);    
+  panel.setTextSize(1);
+  panel.println(0xDEADBEEF, HEX);
+  panel.setTextColor(LED_GREEN);
+  panel.setTextSize(1);
+  panel.println("Groop");
+  panel.println("I implore thee...");
+}
+
+void testFastLines(uint16_t color1, uint16_t color2) {
+  unsigned long start;
+  int           x, y, w = panel.width(), h = panel.height();
+
+  panel.fillScreen(LED_BLACK);
+  for(y=0; y<h; y+=4) panel.drawFastHLine(0, y, w, color1);
+  for(x=0; x<w; x+=4) panel.drawFastVLine(x, 0, h, color2);
+}
+
+void testFilledRects(uint16_t color1, uint16_t color2) {
+  int n, i, i2,
+    cx = panel.width()  / 2 - 1,
+    cy = panel.height() / 2 - 1;
+
+  panel.fillScreen(LED_BLACK);
+  n = min(panel.width(), panel.height());
+  for(i=n; i>0; i-=6) {
+    i2 = i / 2;
+    panel.fillRect(cx-i2, cy-i2, i, i, color1);
+    panel.drawRect(cx-i2, cy-i2, i, i, color2);
+  }
+}
+
+void testFilledCircles(uint8_t radius, uint16_t color) {
+  int x, y, 
+    w = panel.width(), 
+    h = panel.height(), 
+    r2 = radius * 2;
+
+  panel.fillScreen(LED_BLACK);
+  for(x=radius; x<w; x+=r2) {
+    for(y=radius; y<h; y+=r2) {
+      panel.fillCircle(x, y, radius, color);
     }
   }
 }
 
+void testTriangles() {
+  int n, i, 
+    cx = panel.width()  / 2 - 1,
+    cy = panel.height() / 2 - 1;
+
+  panel.fillScreen(LED_BLACK);
+  n = min(cx, cy);
+  for(i=0; i<n; i+=4) {
+    panel.drawTriangle(
+      cx    , cy - i, // peak
+      cx - i, cy + i, // bottom left
+      cx + i, cy + i, // bottom right
+      LED_RED);
+  }
+}
+
+void testRoundRects() {
+  int w, i, i2,
+    cx = panel.width()  / 2 - 1,
+    cy = panel.height() / 2 - 1;
+
+  panel.fillScreen(LED_BLACK);
+  w = min(panel.width(), panel.height());
+  for(i=0; i<w; i+=4) {
+    i2 = i / 2;
+    panel.drawRoundRect(cx-i2, cy-i2, i, i, i/8, LED_YELLOW);
+  }
+}
+*/
+
+/*
+//#include <fonts/FreeSerifBoldItalic9pt7b.h>
+void testFonts(){
+  panel.fillScreen(LED_BLACK);
+  panel.setFont(&FreeSerifBoldItalic9pt7b);
+  panel.setCursor(2, 16);
+  panel.setTextColor(LED_GREEN);  
+  panel.setTextSize(1);
+  panel.println("Hello");
+
+  panel.setFont();
+  panel.setTextColor(LED_WHITE);  
+  panel.setCursor(2, 48);
+  panel.println("FreeSerifBoldItalic9pt7b");
+  delay(10000);
+}
+*/
+
+/*
+const unsigned char LHSlogoBitmap [] PROGMEM = {
+  // 'Hackspace64x64'
+  0xff, 0xff, 0xff, 0xc0, 0x03, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc, 0x00, 0x00, 0x3f, 0xff, 0xff, 
+  0xff, 0xff, 0xe0, 0x00, 0x00, 0x07, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x01, 0xff, 0xff, 
+  0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xff, 
+  0xff, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 
+  0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x03, 0xff, 0xff, 0x80, 0x00, 0x01, 0x80, 0x00, 0x01, 0xff, 
+  0xff, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x07, 0xe0, 0x00, 0x00, 0x7f, 
+  0xfe, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x7f, 0xfc, 0x00, 0x00, 0x1f, 0xf8, 0x00, 0x00, 0x3f, 
+  0xf8, 0x00, 0x00, 0x3f, 0xfc, 0x00, 0x00, 0x1f, 0xf0, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x1f, 
+  0xf0, 0x00, 0x00, 0xff, 0xfe, 0x00, 0x00, 0x0f, 0xe0, 0x00, 0x01, 0xff, 0xfc, 0x00, 0x00, 0x07, 
+  0xe0, 0x00, 0x03, 0xff, 0xfe, 0x00, 0x00, 0x07, 0xc0, 0x00, 0x07, 0xff, 0xff, 0x00, 0x00, 0x03, 
+  0xc0, 0x00, 0x03, 0xff, 0xff, 0x80, 0x00, 0x03, 0xc0, 0x00, 0x11, 0xff, 0xff, 0xc0, 0x00, 0x03, 
+  0x80, 0x00, 0x38, 0xff, 0xff, 0xe0, 0x00, 0x01, 0x80, 0x00, 0x7c, 0x7f, 0xff, 0xf0, 0x00, 0x01, 
+  0x80, 0x00, 0xfe, 0x3f, 0xff, 0xf8, 0x00, 0x01, 0x80, 0x01, 0xff, 0x1c, 0xff, 0xfd, 0x80, 0x01, 
+  0x00, 0x03, 0xff, 0x88, 0xff, 0xff, 0xc0, 0x00, 0x00, 0x07, 0xff, 0xc1, 0xff, 0xff, 0xe0, 0x00, 
+  0x00, 0x0f, 0xff, 0xe3, 0xff, 0xff, 0xf0, 0x00, 0x00, 0x1f, 0xff, 0xc7, 0xff, 0xff, 0xf8, 0x00, 
+  0x00, 0x3f, 0xff, 0x8f, 0xff, 0xff, 0xfc, 0x00, 0x00, 0x7f, 0xff, 0x9f, 0xff, 0xff, 0xfe, 0x00, 
+  0x00, 0x7f, 0xff, 0xff, 0xfd, 0xff, 0xfe, 0x00, 0x00, 0x3f, 0xff, 0xff, 0xf9, 0xff, 0xfc, 0x00, 
+  0x00, 0x1f, 0xff, 0xff, 0xf3, 0xff, 0xf8, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xe7, 0xff, 0xf0, 0x00, 
+  0x00, 0x07, 0xff, 0xff, 0xc3, 0xff, 0xe0, 0x00, 0x00, 0x03, 0xff, 0xff, 0x91, 0xff, 0xc0, 0x00, 
+  0x80, 0x01, 0xbf, 0xff, 0x38, 0xff, 0x80, 0x01, 0x80, 0x00, 0x1f, 0xff, 0xfc, 0x7f, 0x00, 0x01, 
+  0x80, 0x00, 0x0f, 0xff, 0xfe, 0x3e, 0x00, 0x01, 0x80, 0x00, 0x07, 0xff, 0xff, 0x1c, 0x00, 0x01, 
+  0xc0, 0x00, 0x03, 0xff, 0xff, 0x88, 0x00, 0x03, 0xc0, 0x00, 0x01, 0xff, 0xff, 0xc0, 0x00, 0x03, 
+  0xc0, 0x00, 0x00, 0xff, 0xff, 0xe0, 0x00, 0x03, 0xe0, 0x00, 0x00, 0x7f, 0xff, 0xc0, 0x00, 0x07, 
+  0xe0, 0x00, 0x00, 0x3f, 0xff, 0x80, 0x00, 0x07, 0xf0, 0x00, 0x00, 0x7f, 0xff, 0x00, 0x00, 0x0f, 
+  0xf0, 0x00, 0x00, 0x7f, 0xfe, 0x00, 0x00, 0x1f, 0xf8, 0x00, 0x00, 0x3f, 0xfc, 0x00, 0x00, 0x1f, 
+  0xfc, 0x00, 0x00, 0x1f, 0xf8, 0x00, 0x00, 0x3f, 0xfe, 0x00, 0x00, 0x0f, 0xf0, 0x00, 0x00, 0x7f, 
+  0xfe, 0x00, 0x00, 0x07, 0xe0, 0x00, 0x00, 0x7f, 0xff, 0x00, 0x00, 0x03, 0xc0, 0x00, 0x00, 0xff, 
+  0xff, 0x80, 0x00, 0x01, 0x80, 0x00, 0x01, 0xff, 0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x03, 0xff, 
+  0xff, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x1f, 0xff, 
+  0xff, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 
+  0xff, 0xff, 0x80, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 0xff, 0xe0, 0x00, 0x00, 0x07, 0xff, 0xff, 
+  0xff, 0xff, 0xfc, 0x00, 0x00, 0x3f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xc0, 0x03, 0xff, 0xff, 0xff, 
+};
+*/
+
 void loop(){
+// Setup clears all LEDs to off, so scren will be blank when entering loop for the first time
 
-  // The screen will be white when we first enter the loop
-  delay(2000);
-  FillBuffer(0x00);     // Set black (all off)
-  drawText(2, 0,7,"1111111111");
-  drawText(2, 8,1,"2222222222");
-  drawText(2,16,2,"3333333333");
-  drawText(2,24,3,"4444444444");
-  drawText(2,32,4,"5555555555");
-  drawText(2,40,5,"6666666666");
-  drawText(2,48,6,"7777777777");
-  drawText(2,56,7,"8888888888");
+  //testText1to8();
+  //panel.drawCircle(5,5,5,LED_WHITE);
+  //testText();
+  //testFastLines(LED_RED, LED_BLUE);
+  //testTriangles();
+  //testRoundRects();
+  //testFilledRects(LED_CYAN, LED_MAGENTA);
+  //testFilledCircles(8, LED_GREEN);
+  //testFonts();
+  //panel.drawBitmap(0, 0, (const uint8_t *)&LHSlogoBitmap, 64, 64, LED_WHITE, LED_BLUE);
 
-  
-/*  
-  // Clours fade pattern. Cylces the whole display through all the 7 colours
-  delay(1000);
-  FillColour(0x01);
-  FillColour(0x02);
-  FillColour(0x03);
-  FillColour(0x04);
-  FillColour(0x05);
-  FillColour(0x06);
-  delay(1000);
-  FillBuffer(0xFF);
-  delay(4000);
-*/  
-
-
-
+  FillBuffer(0xFF); 		// turn all LED's on
+  delay(100000);
 
 }
+
 
 
 
